@@ -1,0 +1,177 @@
+import torch
+import torch.nn as nn
+import torchvision
+import torchvision.transforms as transforms
+import matplotlib.pyplot as plt
+
+import os
+
+# Device configuration
+device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+print("Using "+ ('GPU' if torch.cuda.is_available() else 'CPU') + " to train the model")
+
+
+# Some hyper parameters
+num_epochs = 50
+num_classed = 10
+batch_size = 100
+learning_rate = 0.0001
+draw_mode = False
+save_mode = True
+
+
+# MNIST dataset
+train_dataset = torchvision.datasets.MNIST( root = './',
+                                            train = True,
+                                            transform = transforms.Compose([
+                                                transforms.ToTensor(),
+                                                transforms.Normalize((0.1307,),(0.3081,))]),
+                                            download = True)
+test_dataset = torchvision.datasets.MNIST(  root = './',
+                                            train = False,
+                                            transform = transforms.Compose([
+                                                transforms.ToTensor(),
+                                                transforms.Normalize((0.1307,),(0.3081,))])
+                                            )
+print("Before split: ","train:",len(train_dataset),"test:", len(test_dataset))
+
+# Split trian set
+train_dataset, val_dataset = torch.utils.data.random_split(train_dataset, [50000, 10000])
+print("After split ","train", len(train_dataset), "validation:", len(val_dataset))
+
+
+#trian_dataset.
+
+
+# Data loader
+train_loader = torch.utils.data.DataLoader( dataset = train_dataset,
+                                            batch_size = batch_size,
+                                            shuffle = True)
+
+val_loader = torch.utils.data.DataLoader(   dataset = val_dataset,
+                                            batch_size = batch_size,
+                                            shuffle = True)
+
+test_loader = torch.utils.data.DataLoader(  dataset = test_dataset,
+                                            batch_size = batch_size,
+                                            shuffle = True)
+
+# CNN
+class CNN(nn.Module):
+    def __init__(self):
+        super(CNN, self).__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(
+                in_channels = 1,
+                out_channels = 16,
+                kernel_size = 5,
+                stride = 1, 
+                padding = 2
+            ),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2)
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(16, 32, kernel_size=5, stride=1, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2)
+        )
+        self.out = nn.Linear(7*7*32, 10)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = x.view(x.size(0), -1)
+        output = self.out(x)
+        return output
+
+cnn = CNN()
+
+# Loss and optimizer
+criterion = nn.CrossEntropyLoss()
+optimizer = torch.optim.Adam(cnn.parameters(), lr=learning_rate)
+
+
+x = []
+y1 = []
+y2 = []
+cnt = 0
+# Train the model
+total_step = len(train_loader)
+for epoch in range(num_epochs):
+    for i, (images, labels) in enumerate(train_loader):
+        images = images.to(device)
+        labels = labels.to(device)
+        
+        # Forward pass
+        outputs = cnn(images)
+        loss = criterion(outputs, labels)
+        
+        # Backward and optimize
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        cnt += batch_size
+        if(draw_mode and (i+1)%5 == 0):
+            x.append(cnt)
+            y1.append(loss.item())
+        if (i+1) % 100 == 0:
+            print ('Epoch [{}/{}], Step [{}/{}], Loss: {:.4f}' 
+                   .format(epoch+1, num_epochs, i+1, total_step, loss.item()))
+        if(draw_mode and (i+1)%5 ==0):
+            vloss_sum = 0
+            vcnt = 0
+            for j, (vimages, vlabels) in enumerate(val_loader):
+                vcnt += 1
+                vimages = vimages.to(device)
+                vlabels = vlabels.to(device)
+                voutputs = cnn(vimages)
+                vloss = criterion(voutputs, vlabels)
+                vloss_sum += (vloss.item() )
+            y2.append(vloss_sum/vcnt  )
+        
+
+tloss_sum = 0
+# Test the model
+cnn.eval()  # eval mode (batchnorm uses moving mean/variance instead of mini-batch mean/variance)
+with torch.no_grad():
+    correct = 0
+    total = 0
+    tcnt = 0
+    for images, labels in test_loader:
+        tcnt += 1
+        images = images.to(device)
+        labels = labels.to(device)
+        outputs = cnn(images)
+        tloss = criterion(outputs, labels)
+        tloss_sum += (tloss.item())
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+
+    tloss_sum = tloss_sum / tcnt
+    print("Epoch = ",num_epochs," learning_rate = ",learning_rate)
+    print('Test Accuracy of the model on the 10000 test images: {} %'.format(100 * correct / total))
+
+
+# Draw the graph
+if(draw_mode):
+    node1 = x[len(x)-1]
+    node2= tloss_sum
+    plt.plot(x, y1, 'b-', label = "Train loss" )
+    plt.plot(x, y2, 'g-', label ="Validation loss")
+    plt.scatter(node1, node2, marker = 'o', c = 'r', label = 'Test loss' )
+    plt.legend(loc = 'upper right')
+    plt.xlabel("number of samples fed in")
+    plt.ylabel("cross entropy loss")
+
+    if(save_mode):
+        plt.savefig("Curve.jpg")
+    else:
+        plt.show()
+
+os.system('say "your program has finished" ')  # need to be deleted
+
+# Save the model checkpoint
+torch.save(cnn.state_dict(), 'model.ckpt')
